@@ -1,0 +1,352 @@
+# TP4 : Experiment Tracking avec MLflow
+
+**Cours MLOps - Détection d'objets avec YOLO tiny**
+
+---
+
+## 📚 Objectifs
+
+- ✅ Utiliser MLflow pour tracer plusieurs runs de détection d'objets (YOLO tiny) sur un dataset ultra-léger
+- ✅ Comparer les runs dans l'UI MLflow, analyser les métriques (mAP, précision, rappel)
+- ✅ Consigner la décision de promotion
+- ✅ (Optionnel) Enregistrer le modèle choisi dans le Model Registry (Stage : Staging/Production)
+
+---
+
+## 📋 Prérequis
+
+Avant de commencer, assurez-vous d'avoir installé :
+
+- **Python 3.11+**
+- **Git**
+- **Docker Desktop** (pour MLflow et MinIO)
+- **PowerShell** (Windows) ou **bash** (Linux/macOS)
+
+---
+
+## 🚀 Dépôt de Départ
+
+**Forkez le dépôt** : [MLflow-CV-Yolo](https://github.com/your-fork/MLflow-CV-Yolo)
+
+Puis clonez **VOTRE fork** :
+
+```bash
+# Remplacez <URL_DE_VOTRE_FORK> par l'URL de votre fork
+git clone <URL_DE_VOTRE_FORK>.git
+cd mlflow-cv-yolo
+```
+
+---
+
+## 📝 Procédure Détaillée
+
+### 0️⃣ Fork & Clone (obligatoire en premier)
+
+Sur GitLab/GitHub :
+1. Cliquez sur **Fork** sur le dépôt MLflow-CV-Yolo
+2. Clonez votre fork en local (voir commande ci-dessus)
+
+---
+
+### 1️⃣ Préparation de l'Environnement Python
+
+#### Windows PowerShell :
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+#### Linux/macOS :
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+#### Windows CMD :
+
+```cmd
+python -m venv .venv
+.\.venv\Scripts\activate.bat
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+---
+
+### 2️⃣ Génération du Mini-Dataset (COCO128 → 1 classe person) & Tracking DVC
+
+#### Générer le dataset minimal :
+
+```bash
+python tools/make_tiny_person_from_coco128.py
+```
+
+**Résultat attendu** :
+- 60 images au total
+- 40 images pour l'entraînement (train)
+- 10 images pour la validation (val)
+- 10 images pour le test (test)
+- 1 seule classe : **person**
+
+#### Tracker le dataset avec DVC :
+
+Le tracking DVC assure la reproductibilité des données.
+
+```bash
+# Initialiser DVC (si pas déjà fait dans ce repo)
+dvc init
+
+# Ajouter tout le dossier du dataset (images + labels)
+dvc add data/tiny_coco -R
+
+# Commit Git des métadonnées DVC et de l'ignore
+git add data/tiny_coco.dvc .gitignore .dvc/ .gitattributes
+git commit -m "Track dataset tiny_coco with DVC"
+```
+
+#### (Optionnel) Configurer un remote DVC et pousser les blobs :
+
+**Exemple local** :
+```bash
+dvc remote add -d localfs ./dvcstore
+dvc push
+```
+
+**Exemple MinIO** (réutiliser le TP DVC si configuré) :
+```bash
+dvc remote add -d storage s3://mlops-dvc
+dvc remote modify storage endpointurl http://localhost:9000
+dvc remote modify storage use_ssl false
+dvc remote modify storage region us-east-1
+dvc push
+```
+
+---
+
+### 3️⃣ Démarrer MLflow (backend SQLite + artefacts MinIO)
+
+#### Lancer les services Docker :
+
+```bash
+docker compose up -d
+docker compose ps
+docker compose logs -f mlflow  # Ctrl+C pour sortir
+```
+
+#### Vérifier l'accès :
+
+- **UI MLflow** : http://localhost:5000
+- **Console MinIO** : http://localhost:9001  
+  (identifiants dans `docker-compose.yml` ou `mlflow.env`)
+
+✅ **Checkpoint** : Vous devriez voir l'interface MLflow dans votre navigateur
+
+---
+
+### 4️⃣ Pointer le Script & Callbacks vers le Même Serveur MLflow
+
+Configurez la variable d'environnement pour que tous les scripts utilisent le même serveur MLflow.
+
+#### Linux/macOS (bash/zsh) :
+
+```bash
+export MLFLOW_TRACKING_URI=http://localhost:5000
+```
+
+#### Windows PowerShell :
+
+```powershell
+$env:MLFLOW_TRACKING_URI = "http://localhost:5000"
+```
+
+#### Windows CMD :
+
+```cmd
+set MLFLOW_TRACKING_URI=http://localhost:5000
+```
+
+---
+
+### 5️⃣ Lancer un Run Baseline
+
+Depuis la racine du projet :
+
+#### Mode package (recommandé) :
+
+```bash
+python -m src.train_cv --epochs 3 --imgsz 320 --exp-name cv_yolo_tiny
+```
+
+#### OU lancement direct :
+
+```bash
+python src/train_cv.py --epochs 3 --imgsz 320 --exp-name cv_yolo_tiny
+```
+
+**Durée estimée** : 1-2 minutes
+
+✅ **Checkpoint** : Vérifiez dans MLflow UI qu'un nouveau run apparaît
+
+---
+
+### 6️⃣ Générer une Grille de Runs (8 runs)
+
+La grille de runs permet de tester différentes combinaisons d'hyperparamètres.
+
+#### Linux/macOS :
+
+```bash
+chmod +x scripts/run_grid.sh
+bash scripts/run_grid.sh
+```
+
+#### Windows PowerShell :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_grid.ps1
+```
+
+#### Windows CMD :
+
+```cmd
+scripts\run_grid.cmd
+```
+
+**Durée estimée** : 5-10 minutes (selon le nombre de configurations)
+
+**Configurations testées** :
+- Tailles d'image : 320, 416
+- Learning rates : 0.005, 0.01
+- Seeds : 1, 42
+- Epochs : 3 (fixe)
+
+✅ **Checkpoint** : Vous devriez voir 8-9 runs dans MLflow UI
+
+---
+
+### 7️⃣ Comparaison dans l'UI MLflow
+
+#### Accéder à l'expérience :
+
+1. Ouvrir http://localhost:5000
+2. Menu **Experiments** → `cv_yolo_tiny` (ou **All Experiments**)
+3. Filtrer la période sur **All runs**
+4. Sélectionner plusieurs runs (cochez les cases)
+5. Cliquer sur **Compare**
+
+#### Vue d'ensemble des runs :
+
+![Liste des runs MLflow](img/run.png)
+*Figure 1 : Vue d'ensemble des runs dans l'interface MLflow*
+
+#### Métriques à examiner :
+
+Dans l'écran de comparaison, analysez :
+- **mAP@50** : Précision moyenne à 50% IoU
+- **mAP@50-95** : Précision moyenne sur différents seuils IoU
+- **Precision** : Proportion de vraies détections parmi les détections
+- **Recall** : Proportion de détections parmi les objets réels
+
+#### Artefacts disponibles :
+
+Pour chaque run, ouvrez les artefacts :
+- `results.png` : Courbes d'entraînement
+- `confusion_matrix.png` : Matrice de confusion
+- `PR_curve.png` : Courbe Précision-Recall
+- `F1_curve.png` : Courbe F1-score
+- `weights/best.pt` : Meilleur modèle (poids)
+- `weights/last.pt` : Dernier checkpoint
+
+#### Résultats d'entraînement :
+
+![Courbes d'entraînement](img/results.png)
+*Figure 2 : Courbes d'entraînement - Loss, mAP, Precision, Recall par époque*
+
+**Observations** :
+- Box Loss décroît régulièrement (convergence normale)
+- mAP@50 augmente progressivement
+- Precision/Recall doivent être équilibrés
+
+#### Matrice de confusion :
+
+
+**Interprétation** :
+- **True Positives** : Personnes correctement détectées
+- **False Positives** : Background détecté comme personne (à minimiser)
+- **False Negatives** : Personnes manquées (à minimiser)
+- **True Negatives** : Background correctement ignoré
+
+---
+
+### 8️⃣ Export et Tableau de Décision
+
+#### Export des résultats :
+
+Dans l'écran de comparaison MLflow :
+- Utilisez l'**export CSV** (bouton en haut à droite)
+- OU faites des **captures d'écran** des tableaux de métriques
+
+#### Compléter le template de décision :
+
+Fichier à remplir : `reports/templates/decision_template.md`
+
+**Sections à compléter** :
+
+1. **Objectifs et Contraintes**
+   - Objectif principal (ex: maximiser mAP@50-95)
+   - Contraintes (dataset limité, temps d'entraînement, etc.)
+
+2. **Candidat Promu**
+   - Run ID du meilleur modèle
+   - Paramètres utilisés (epochs, imgsz, lr, seed)
+   - Métriques obtenues (mAP, precision, recall)
+
+3. **Arguments POUR/CONTRE**
+   - Comparer 2-3 alternatives
+   - Lister avantages et inconvénients
+
+4. **Risques et Mitigations**
+   - Identifier 4 risques principaux
+   - Proposer des stratégies d'atténuation
+
+5. **Décision Finale**
+   - **OUI** ✅ ou **NON** ❌
+   - Justification claire
+   - Conditions éventuelles
+
+6. **Étapes Suivantes**
+   - Plan d'action court terme
+   - Plan d'action moyen terme
+   - Plan d'action long terme
+
+---
+
+## 📊 Exemple de Comparaison
+
+| Run | Epochs | ImgSz | LR | Seed | mAP@50-95 | mAP@50 | Precision | Recall |
+|-----|--------|-------|-----|------|-----------|--------|-----------|--------|
+| **Run 1** | 3 | 416 | 0.01 | 42 | **0.2729** | 0.3228 | 0.008 | 0.7742 |
+| Run 2 | 3 | 416 | 0.01 | 1 | 0.2586 | 0.3013 | 0.008 | 0.7742 |
+| Run 3 | 3 | 320 | 0.01 | 42 | 0.2314 | 0.2751 | 0.0084 | 0.7097 |
+| Run 4 | 3 | 320 | 0.005 | 42 | 0.2250 | 0.2680 | 0.0078 | 0.6935 |
+
+**Insights** :
+- 🏆 `imgsz=416` surpasse `imgsz=320` (+19% de mAP@50-95)
+- 🏆 `lr=0.01` est optimal (vs 0.005)
+- 🏆 `seed=42` légèrement meilleur que `seed=1` (variance < 6%)
+
+**Configuration gagnante** : epochs=3, imgsz=416, lr=0.01, seed=42
+## 📚 Ressources
+
+- [Documentation MLflow](https://mlflow.org/docs/latest/)
+- [Documentation DVC](https://dvc.org/doc)
+- [Guide YOLOv8 Ultralytics](https://docs.ultralytics.com/)
+- [Dataset COCO](https://cocodataset.org/)
+
+
